@@ -264,14 +264,18 @@ def create_app(settings: Settings) -> Starlette:
         if not authorized(request):
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
         name = request.path_params["name"]
-        if name == "catalog":
-            result = await bridge.sync.refresh_catalog()
-        elif name == "hourly":
-            result = await bridge.sync.run_hourly_snapshot()
-        elif name == "preflight":
-            result = await bridge.sync.preflight()
-        else:
-            return JSONResponse({"detail": "Not found"}, status_code=404)
+        try:
+            if name == "catalog":
+                result = await bridge.sync.refresh_catalog()
+            elif name == "hourly":
+                result = await bridge.sync.run_hourly_snapshot()
+            elif name == "preflight":
+                result = await bridge.sync.preflight()
+            else:
+                return JSONResponse({"detail": "Not found"}, status_code=404)
+        except RuntimeError as exc:
+            logger.warning("admin synchronization %s rejected: %s", name, exc)
+            return JSONResponse({"detail": str(exc)}, status_code=409)
         return JSONResponse(result)
 
     async def metrics(request: Request) -> Response:
