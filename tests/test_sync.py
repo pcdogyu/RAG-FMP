@@ -50,3 +50,19 @@ async def test_snapshot_is_idempotent(tmp_path: Path):
 
     assert first == {"processed": 1, "written": 1}
     assert second == {"processed": 1, "written": 0}
+
+
+async def test_preflight_uses_bootstrap_universe_for_budget(tmp_path: Path):
+    repo = Repository(f"sqlite:///{tmp_path / 'bridge.db'}")
+    repo.create_tables()
+    for index in range(100):
+        repo.upsert_instrument({"symbol": f"S{index:03d}"}, "stock")
+    service = SyncService(
+        FakeFMP(), repo, FakeWeKnora(), concurrency=1, bootstrap_limit=1, shard_size=10
+    )
+
+    result = await service.preflight()
+
+    assert result["catalog_counts"] == {"stock": 100}
+    assert result["selected_counts"] == {"stock": 1}
+    assert result["estimated_daily_requests"] == 30

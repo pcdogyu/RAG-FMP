@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import Counter
 from datetime import UTC, datetime
 
 from .fmp import ASSET_TYPES, FMPClient
@@ -37,20 +38,30 @@ class SyncService:
         checks["fmp"] = "ok"
         await self.weknora.preflight()
         checks["weknora"] = "ok"
-        counts = self.repository.instrument_counts()
+        catalog_counts = self.repository.instrument_counts()
+        selected_counts = catalog_counts
+        if self.bootstrap_limit:
+            selected_counts = dict(
+                Counter(
+                    instrument.asset_type
+                    for instrument in self.repository.list_instruments(limit=self.bootstrap_limit)
+                )
+            )
         # Starter uses the allowed single-symbol quote endpoint, not batch-quote.
-        quote_calls = sum(counts.values())
+        quote_calls = sum(selected_counts.values())
         daily_research_calls = sum(
             count * (6 if asset_type in {"stock", "etf"} else 2)
-            for asset_type, count in counts.items()
+            for asset_type, count in selected_counts.items()
         )
         estimated = quote_calls * 24 + daily_research_calls
-        checks["catalog_counts"] = counts
+        checks["catalog_counts"] = catalog_counts
+        checks["selected_counts"] = selected_counts
+        checks["bootstrap_limit"] = self.bootstrap_limit
         checks["estimated_daily_requests"] = estimated
         if estimated and estimated > self.fmp.limiter.max_per_day:
             raise RuntimeError(
                 f"configured FMP daily budget ({self.fmp.limiter.max_per_day}) is below the conservative "
-                f"full-market estimate ({estimated}); reduce universe or raise the budget before enabling sync"
+                f"sync estimate ({estimated}); reduce universe or raise the budget before enabling sync"
             )
         checks["checked_at"] = datetime.now(UTC).isoformat()
         return checks
