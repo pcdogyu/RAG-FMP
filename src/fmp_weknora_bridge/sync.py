@@ -22,6 +22,7 @@ class SyncService:
         concurrency: int,
         bootstrap_limit: int,
         shard_size: int,
+        sync_symbols: tuple[str, ...] = (),
     ):
         self.fmp = fmp
         self.repository = repository
@@ -29,6 +30,7 @@ class SyncService:
         self.semaphore = asyncio.Semaphore(concurrency)
         self.bootstrap_limit = bootstrap_limit
         self.shard_size = shard_size
+        self.sync_symbols = sync_symbols
         self._catalog_lock = asyncio.Lock()
         self._snapshot_lock = asyncio.Lock()
 
@@ -39,14 +41,24 @@ class SyncService:
         await self.weknora.preflight()
         checks["weknora"] = "ok"
         catalog_counts = self.repository.instrument_counts()
-        selected_counts = catalog_counts
-        if self.bootstrap_limit:
-            selected_counts = dict(
-                Counter(
-                    instrument.asset_type
-                    for instrument in self.repository.list_instruments(limit=self.bootstrap_limit)
+        selected_instruments = self._selected_instruments()
+        if self.sync_symbols:
+            resolved_symbols = {instrument.symbol.upper() for instrument in selected_instruments}
+            missing_symbols = [symbol for symbol in self.sync_symbols if symbol not in resolved_symbols]
+            checks["sync_symbols"] = list(self.sync_symbols)
+            checks["resolved_symbols"] = sorted(resolved_symbols)
+            checks["missing_symbols"] = missing_symbols
+            if missing_symbols:
+                raise RuntimeError(
+                    "SYNC_SYMBOLS contains symbols absent from the active catalog: "
+                    + ", ".join(missing_symbols)
+                    + "; run catalog synchronization or correct the whitelist"
                 )
-            )
+        selected_counts = (
+            dict(Counter(instrument.asset_type for instrument in selected_instruments))
+            if self.sync_symbols or self.bootstrap_limit
+            else catalog_counts
+        )
         # Starter uses the allowed single-symbol quote endpoint, not batch-quote.
         quote_calls = sum(selected_counts.values())
         daily_research_calls = sum(
@@ -102,7 +114,7 @@ class SyncService:
         async with self._snapshot_lock:
             with SYNC_DURATION.labels(name="hourly").time():
                 run = self.repository.start_run("hourly")
-                instruments = self.repository.list_instruments(limit=self.bootstrap_limit)
+                instruments = self._selected_instruments()
                 processed = written = 0
                 try:
                     for start in range(0, len(instruments), self.shard_size):
@@ -125,6 +137,11 @@ class SyncService:
                         run.id, processed=processed, written=written, error=str(exc)
                     )
                     raise
+
+    def _selected_instruments(self):
+        if self.sync_symbols:
+            return self.repository.list_instruments(symbols=self.sync_symbols)
+        return self.repository.list_instruments(limit=self.bootstrap_limit)
 
     async def _sync_instrument(self, symbol: str, asset_type: str) -> bool:
         async with self.semaphore:

@@ -25,7 +25,8 @@
    Invoke-RestMethod http://localhost:8000/admin/sync/preflight -Method Post -Headers $headers
    ```
 
-6. 先执行目录同步，再用较小的 `SYNC_BOOTSTRAP_LIMIT` 试运行小时同步：
+6. 先执行目录同步，再用较小的 `SYNC_BOOTSTRAP_LIMIT` 试运行小时同步。若要固定同步标的，设置
+   `SYNC_SYMBOLS=AAPL,BTCUSD,EURUSD`；白名单优先于 `SYNC_BOOTSTRAP_LIMIT`，预检会拒绝目录中不存在的代码：
 
    ```powershell
    Invoke-RestMethod http://localhost:8000/admin/sync/catalog -Method Post -Headers $headers
@@ -48,4 +49,3 @@ uv run ruff check .
 ```
 
 本项目不记录或打印 FMP、MCP、WeKnora 的密钥。生产环境应通过 Docker secrets 或外部密钥管理器注入这些环境变量。
-

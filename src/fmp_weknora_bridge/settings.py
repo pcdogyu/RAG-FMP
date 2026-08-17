@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     sync_hourly_minute: int = 10
     sync_catalog_hour: int = 2
     sync_bootstrap_limit: int = 0
+    sync_symbols: str = ""
 
     @field_validator("fmp_requests_per_minute", "fmp_daily_request_budget", "fmp_concurrency")
     @classmethod
@@ -42,9 +43,23 @@ class Settings(BaseSettings):
             raise ValueError("must be between 0 and 59")
         return value
 
+    @field_validator("sync_symbols")
+    @classmethod
+    def normalize_sync_symbols(cls, value: str) -> str:
+        symbols: list[str] = []
+        for raw_symbol in value.split(","):
+            symbol = raw_symbol.strip().upper()
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+        return ",".join(symbols)
+
     @property
     def configured(self) -> bool:
         return bool(self.fmp_api_key.get_secret_value())
+
+    @property
+    def sync_symbol_list(self) -> tuple[str, ...]:
+        return tuple(symbol for symbol in self.sync_symbols.split(",") if symbol)
 
 
 @lru_cache

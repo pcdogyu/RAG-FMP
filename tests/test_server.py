@@ -12,3 +12,10 @@ def test_health_is_public_and_ready_requires_fmp_key(tmp_path):
         assert client.get("/health").json() == {"status": "ok"}
         assert client.get("/ready").status_code == 503
         assert client.get("/admin/runs").status_code == 401
+
+
+def test_sync_symbols_are_normalized():
+    settings = Settings(sync_symbols=" aapl, BTCUSD, AAPL ,, eurusd ")
+
+    assert settings.sync_symbols == "AAPL,BTCUSD,EURUSD"
+    assert settings.sync_symbol_list == ("AAPL", "BTCUSD", "EURUSD")

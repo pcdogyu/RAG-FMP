@@ -65,6 +65,7 @@ class Bridge:
             concurrency=settings.fmp_concurrency,
             bootstrap_limit=settings.sync_bootstrap_limit,
             shard_size=settings.sync_shard_size,
+            sync_symbols=settings.sync_symbol_list,
         )
         self._scheduler_task: asyncio.Task[None] | None = None
         self._executed_slots: set[str] = set()

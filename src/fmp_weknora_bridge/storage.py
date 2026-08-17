@@ -48,9 +48,18 @@ class Repository:
             entity.active = "true"
             return entity
 
-    def list_instruments(self, limit: int = 0) -> list[Instrument]:
+    def list_instruments(
+        self, limit: int = 0, symbols: tuple[str, ...] = ()
+    ) -> list[Instrument]:
         with self.session() as session:
             query = select(Instrument).where(Instrument.active == "true").order_by(Instrument.id)
+            if symbols:
+                requested = tuple(dict.fromkeys(symbol.strip().upper() for symbol in symbols if symbol.strip()))
+                rows = list(
+                    session.scalars(query.where(func.upper(Instrument.symbol).in_(requested)))
+                )
+                by_symbol = {instrument.symbol.upper(): instrument for instrument in rows}
+                return [by_symbol[symbol] for symbol in requested if symbol in by_symbol]
             if limit:
                 query = query.limit(limit)
             return list(session.scalars(query))
