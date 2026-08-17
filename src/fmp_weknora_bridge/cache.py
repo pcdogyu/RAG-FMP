@@ -69,9 +69,6 @@ class FixedWindowLimiter:
     def acquire(self) -> None:
         now_window = int(time.time() // 60)
         day = time.strftime("%Y%m%d", time.gmtime())
-        daily = self.cache.increment(f"fmp:daily:{day}", 86460)
-        if daily > self.max_per_day:
-            raise RateLimitExceeded("FMP daily request budget exhausted")
         if self.cache._redis:
             key = f"fmp:rate:{now_window}"
             count = self.cache._redis.incr(key)
@@ -79,14 +76,30 @@ class FixedWindowLimiter:
                 self.cache._redis.expire(key, 61)
             if count > self.max_per_minute:
                 raise RateLimitExceeded("FMP request-per-minute budget exhausted")
-            return
-        with self._lock:
-            if self._window != now_window:
-                self._window, self._count = now_window, 0
-            self._count += 1
-            if self._count > self.max_per_minute:
-                raise RateLimitExceeded("FMP request-per-minute budget exhausted")
+        else:
+            with self._lock:
+                if self._window != now_window:
+                    self._window, self._count = now_window, 0
+                if self._count >= self.max_per_minute:
+                    raise RateLimitExceeded("FMP request-per-minute budget exhausted")
+                self._count += 1
+        daily = self.cache.increment(f"fmp:daily:{day}", 86460)
+        if daily > self.max_per_day:
+            raise RateLimitExceeded("FMP daily request budget exhausted")
 
+    async def acquire_async(self) -> None:
+        """Wait for the next FMP minute window instead of dropping sync work."""
+        import asyncio
+
+        while True:
+            try:
+                self.acquire()
+                return
+            except RateLimitExceeded as exc:
+                if "request-per-minute" not in str(exc):
+                    raise
+                delay = max(0.1, (int(time.time() // 60) + 1) * 60 - time.time())
+                await asyncio.sleep(delay)
 
 class RateLimitExceeded(RuntimeError):
     pass

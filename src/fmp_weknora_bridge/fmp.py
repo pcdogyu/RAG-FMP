@@ -43,7 +43,7 @@ class FMPClient:
     async def request(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
         if not self.api_key:
             raise FMPError("FMP_API_KEY is not configured")
-        self.limiter.acquire()
+        await self.limiter.acquire_async()
         params = params or {}
         for attempt in range(3):
             try:

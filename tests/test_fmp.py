@@ -4,7 +4,7 @@ import pytest
 import respx
 from httpx import Response
 
-from fmp_weknora_bridge.cache import Cache
+from fmp_weknora_bridge.cache import Cache, FixedWindowLimiter, RateLimitExceeded
 from fmp_weknora_bridge.fmp import FMPClient
 
 
@@ -64,3 +64,14 @@ async def test_nasdaq_stocks_uses_paginated_company_screener(client):
     assert result == [{"symbol": "AAPL", "exchangeShortName": "NASDAQ", "isEtf": False}]
     assert route.calls[0].request.url.params["exchange"] == "NASDAQ"
     assert route.calls[0].request.url.params["page"] == "0"
+
+
+def test_rate_limiter_does_not_consume_daily_budget_for_rejected_minute_slot():
+    cache = Cache()
+    limiter = FixedWindowLimiter(cache, max_per_minute=1, max_per_day=10)
+
+    limiter.acquire()
+    with pytest.raises(RateLimitExceeded, match="request-per-minute"):
+        limiter.acquire()
+
+    assert cache.get("fmp:daily:" + __import__("time").strftime("%Y%m%d", __import__("time").gmtime())) == 1
