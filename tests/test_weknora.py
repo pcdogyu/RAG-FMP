@@ -19,4 +19,9 @@ async def test_create_manual_knowledge_uses_weknora_api():
 
     assert knowledge_id == "knowledge-1"
     assert route.calls[0].request.headers["x-api-key"] == "wk-secret"
-    assert json.loads(route.calls[0].request.content) == {"title": "FMP | AAPL", "content": "# AAPL"}
+    assert json.loads(route.calls[0].request.content) == {
+        "title": "FMP | AAPL",
+        "content": "# AAPL",
+        "status": "publish",
+        "channel": "api",
+    }
