@@ -1,0 +1,44 @@
+[project]
+name = "fmp-weknora-bridge"
+version = "0.1.0"
+description = "A controlled Financial Modeling Prep MCP server and WeKnora knowledge-base synchronizer."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastmcp>=2.14,<3",
+  "httpx>=0.28,<1",
+  "prometheus-client>=0.21,<1",
+  "pydantic-settings>=2.7,<3",
+  "redis>=5.2,<7",
+  "sqlalchemy>=2.0,<3",
+  "psycopg[binary]>=3.2,<4",
+  "starlette>=0.47,<2",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.scripts]
+fmp-weknora-bridge = "fmp_weknora_bridge.main:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3,<9",
+  "pytest-asyncio>=0.25,<1",
+  "respx>=0.22,<1",
+  "ruff>=0.9,<1",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
