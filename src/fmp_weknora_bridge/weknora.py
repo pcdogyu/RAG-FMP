@@ -48,8 +48,6 @@ class WeKnoraClient:
         payload: dict[str, Any] = {
             "title": title,
             "content": content,
-            "status": "completed",
-            "channel": "fmp",
         }
         if knowledge_id:
             response = await self.client.put(
