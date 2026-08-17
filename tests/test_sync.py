@@ -143,7 +143,12 @@ async def test_dynamic_universes_union_manual_symbols_and_rotate(tmp_path: Path)
     assert preflight["effective_universe_count"] == 7
     assert preflight["hourly_rotation_batch_size"] == 3
     assert preflight["full_coverage_hours"] == 3
-    assert preflight["estimated_daily_requests"] == 154
+    assert preflight["estimated_daily_requests"] == 134
+    assert preflight["estimated_daily_rotation_counts"] == {
+        "crypto": 31,
+        "forex": 21,
+        "stock": 20,
+    }
     assert {instrument.asset_type for instrument in first_batch} == {"crypto", "forex", "stock"}
     assert next_position == 3
 

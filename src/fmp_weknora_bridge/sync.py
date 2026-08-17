@@ -77,15 +77,20 @@ class SyncService:
                     "nasdaq from SYNC_UNIVERSES."
                 )
             hourly_batch = min(self.rotation_batch_size, len(selected_instruments))
-            daily_visits = hourly_batch * 24
-            fundamental_targets = min(
-                daily_visits,
-                sum(count for kind, count in selected_counts.items() if kind in {"stock", "etf"}),
+            daily_rotation = self._planned_rotation_instruments(hours=24)
+            daily_counts = Counter(item.asset_type for item in daily_rotation)
+            fundamental_targets = {
+                item.id for item in daily_rotation if item.asset_type in {"stock", "etf"}
+            }
+            # Quotes are fetched on every rotation visit. Crypto/forex also fetch
+            # market news on every visit; stock/ETF research has five requests only
+            # when a symbol is first encountered in the 24-hour rotation window.
+            estimated = (
+                len(daily_rotation)
+                + daily_counts["crypto"]
+                + daily_counts["forex"]
+                + len(fundamental_targets) * 5
             )
-            # Each rotating visit has at most a quote and news request. A newly seen
-            # stock/ETF can additionally use five annual-research requests. This is
-            # deliberately conservative and is the startup budget safety gate.
-            estimated = daily_visits * 2 + fundamental_targets * 5
             checks.update(
                 {
                     "sync_universes": list(self.sync_universes),
@@ -93,7 +98,9 @@ class SyncService:
                     "effective_universe_count": len(selected_instruments),
                     "hourly_rotation_batch_size": hourly_batch,
                     "full_coverage_hours": _ceil_div(len(selected_instruments), hourly_batch),
-                    "estimated_daily_rotating_visits": daily_visits,
+                    "estimated_daily_rotating_visits": len(daily_rotation),
+                    "estimated_daily_rotation_counts": dict(daily_counts),
+                    "estimated_daily_fundamental_targets": len(fundamental_targets),
                 }
             )
         else:
@@ -250,6 +257,19 @@ class SyncService:
         limit = min(self.rotation_batch_size, len(instruments))
         start = self.repository.get_sync_cursor(ROTATION_CURSOR_NAME) % len(instruments)
         return (instruments[start:] + instruments[:start])[:limit], (start + limit) % len(instruments)
+
+    def _planned_rotation_instruments(self, *, hours: int) -> list[Instrument]:
+        instruments = self._selected_instruments()
+        if not instruments or not self.sync_universes:
+            return instruments
+        instruments = _interleave_by_asset_type(instruments)
+        batch_size = min(self.rotation_batch_size, len(instruments))
+        position = self.repository.get_sync_cursor(ROTATION_CURSOR_NAME) % len(instruments)
+        planned: list[Instrument] = []
+        for _ in range(hours):
+            planned.extend((instruments[position:] + instruments[:position])[:batch_size])
+            position = (position + batch_size) % len(instruments)
+        return planned
 
     def _advance_rotation_cursor(self, next_position: int | None) -> None:
         if self.sync_universes and next_position is not None:
