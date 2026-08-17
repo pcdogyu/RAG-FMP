@@ -158,7 +158,7 @@ async def test_catalog_marks_nasdaq_without_erasing_it_from_stock_list(tmp_path:
         async def catalog(self, asset_type):
             return [{"symbol": "AAPL"}] if asset_type == "stock" else []
 
-        async def nasdaq_constituents(self):
+        async def nasdaq_stocks(self):
             return [{"symbol": "AAPL", "name": "Apple Inc."}]
 
     repo = Repository(f"sqlite:///{tmp_path / 'bridge.db'}")

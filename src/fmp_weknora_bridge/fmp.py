@@ -12,6 +12,8 @@ from .observability import FMP_ERRORS, FMP_REQUESTS
 ASSET_TYPES = {"stock", "etf", "crypto", "forex"}
 MAX_SYMBOLS_PER_REQUEST = 25
 MAX_HISTORY_DAYS = 3660
+NASDAQ_SCREENER_PAGE_SIZE = 1000
+MAX_NASDAQ_SCREENER_PAGES = 20
 
 
 class FMPError(RuntimeError):
@@ -221,5 +223,38 @@ class FMPClient:
         }[asset_type]
         return await self.cached_request(endpoint, ttl_seconds=23 * 3600)
 
-    async def nasdaq_constituents(self) -> Any:
-        return await self.cached_request("nasdaq-constituent", ttl_seconds=23 * 3600)
+    async def nasdaq_stocks(self) -> list[dict[str, Any]]:
+        """Return active NASDAQ-listed equities using the Starter-authorized screener.
+
+        FMP's nasdaq-constituent endpoint is an index dataset and is not part of
+        the Starter entitlement. The exchange-filtered company screener provides
+        the required NASDAQ listing directory instead.
+        """
+        rows: list[dict[str, Any]] = []
+        for page in range(MAX_NASDAQ_SCREENER_PAGES):
+            payload = await self.cached_request(
+                "company-screener",
+                {
+                    "exchange": "NASDAQ",
+                    "isActivelyTrading": "true",
+                    "limit": NASDAQ_SCREENER_PAGE_SIZE,
+                    "page": page,
+                },
+                ttl_seconds=23 * 3600,
+            )
+            page_rows = payload if isinstance(payload, list) else []
+            for item in page_rows:
+                if not isinstance(item, dict):
+                    continue
+                exchange = str(item.get("exchangeShortName") or item.get("exchange") or "").upper()
+                if exchange == "NASDAQ" and item.get("isEtf") is not True:
+                    rows.append(item)
+            if len(page_rows) < NASDAQ_SCREENER_PAGE_SIZE:
+                break
+        else:
+            raise FMPError(
+                "NASDAQ company screener exceeded the configured pagination limit; "
+                "increase MAX_NASDAQ_SCREENER_PAGES"
+            )
+        by_symbol = {str(item.get("symbol") or "").upper(): item for item in rows}
+        return [by_symbol[symbol] for symbol in sorted(by_symbol) if symbol]

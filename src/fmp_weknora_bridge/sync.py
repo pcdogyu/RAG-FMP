@@ -73,7 +73,7 @@ class SyncService:
             if "nasdaq" in self.sync_universes and not universe_counts["nasdaq"]:
                 raise RuntimeError(
                     "NASDAQ universe is configured but no NASDAQ constituents are available in the "
-                    "catalog. Refresh the catalog with FMP access to nasdaq-constituent, or remove "
+                    "catalog. Refresh the catalog with FMP access to company-screener, or remove "
                     "nasdaq from SYNC_UNIVERSES."
                 )
             hourly_batch = min(self.rotation_batch_size, len(selected_instruments))
@@ -131,9 +131,10 @@ class SyncService:
                     catalog = await self.fmp.catalog(asset_type)
                     counts[asset_type] = self._upsert_catalog(catalog, asset_type)
                 # stock-list does not reliably carry exchange information for this
-                # subscription, so NASDAQ membership is sourced separately.
+                # subscription, so NASDAQ listings are sourced from the dedicated
+                # Starter-authorized exchange-filtered company screener.
                 counts["nasdaq"] = self._upsert_catalog(
-                    await self.fmp.nasdaq_constituents(), "stock", exchange_override="NASDAQ"
+                    await self.fmp.nasdaq_stocks(), "stock", exchange_override="NASDAQ"
                 )
                 self.repository.finish_run(
                     run.id, processed=sum(counts.values()), written=sum(counts.values())

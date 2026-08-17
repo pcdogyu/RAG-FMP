@@ -27,12 +27,12 @@
 
 6. 先执行目录同步，再用较小的 `SYNC_BOOTSTRAP_LIMIT` 试运行小时同步。生产全市场轮换可设置
    `SYNC_UNIVERSES=crypto,nasdaq,forex_g10`、`SYNC_ROTATION_BATCH_SIZE=1000`；服务每天从 FMP 刷新目录，
-   并以稳定的跨资产轮换顺序每小时处理下一批。NASDAQ 成分来自 FMP 的
-   `nasdaq-constituent` 目录，G10 外汇只保留 USD、EUR、JPY、GBP、CHF、CAD、AUD、NZD、SEK、NOK 的交叉对。
+   并以稳定的跨资产轮换顺序每小时处理下一批。NASDAQ 上市股票来自 FMP 的
+   `company-screener?exchange=NASDAQ` 分页目录，G10 外汇只保留 USD、EUR、JPY、GBP、CHF、CAD、AUD、NZD、SEK、NOK 的交叉对。
    `SYNC_SYMBOLS=AAPL,BTCUSD,EURUSD` 是手工补充标的，会与市场范围合并；不配置市场范围时，手工代码
    仍会覆盖 `SYNC_BOOTSTRAP_LIMIT`。预检会拒绝目录中不存在的手工代码，并基于每小时轮换批次估算日调用量：
 
-   `nasdaq` 范围需要当前 FMP Key 有 `nasdaq-constituent` 端点权限；若目录中没有可用 NASDAQ
+   `nasdaq` 范围需要当前 FMP Key 有 `company-screener` 端点权限；若目录中没有可用 NASDAQ
    成分，预检会拒绝启动，避免服务无提示地降级为只同步其他市场。
 
    ```powershell

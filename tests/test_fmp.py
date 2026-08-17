@@ -42,3 +42,25 @@ async def test_rejects_unsupported_quarterly_statements(client):
 async def test_rejects_excessive_history_range(client):
     with pytest.raises(ValueError, match="no more than"):
         await client.price_history("AAPL", "1d", date(2010, 1, 1), date(2025, 1, 1))
+
+
+@respx.mock
+async def test_nasdaq_stocks_uses_paginated_company_screener(client):
+    route = respx.get("https://fmp.example/stable/company-screener").mock(
+        side_effect=[
+            Response(
+                200,
+                json=[
+                    {"symbol": "AAPL", "exchangeShortName": "NASDAQ", "isEtf": False},
+                    {"symbol": "QQQ", "exchangeShortName": "NASDAQ", "isEtf": True},
+                    {"symbol": "IBM", "exchangeShortName": "NYSE", "isEtf": False},
+                ],
+            )
+        ]
+    )
+
+    result = await client.nasdaq_stocks()
+
+    assert result == [{"symbol": "AAPL", "exchangeShortName": "NASDAQ", "isEtf": False}]
+    assert route.calls[0].request.url.params["exchange"] == "NASDAQ"
+    assert route.calls[0].request.url.params["page"] == "0"
