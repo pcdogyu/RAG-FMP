@@ -220,3 +220,6 @@ class FMPClient:
             "forex": "forex-list",
         }[asset_type]
         return await self.cached_request(endpoint, ttl_seconds=23 * 3600)
+
+    async def nasdaq_constituents(self) -> Any:
+        return await self.cached_request("nasdaq-constituent", ttl_seconds=23 * 3600)

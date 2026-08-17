@@ -25,8 +25,12 @@
    Invoke-RestMethod http://localhost:8000/admin/sync/preflight -Method Post -Headers $headers
    ```
 
-6. 先执行目录同步，再用较小的 `SYNC_BOOTSTRAP_LIMIT` 试运行小时同步。若要固定同步标的，设置
-   `SYNC_SYMBOLS=AAPL,BTCUSD,EURUSD`；白名单优先于 `SYNC_BOOTSTRAP_LIMIT`，预检会拒绝目录中不存在的代码：
+6. 先执行目录同步，再用较小的 `SYNC_BOOTSTRAP_LIMIT` 试运行小时同步。生产全市场轮换可设置
+   `SYNC_UNIVERSES=crypto,nasdaq,forex_g10`、`SYNC_ROTATION_BATCH_SIZE=1000`；服务每天从 FMP 刷新目录，
+   并以稳定的跨资产轮换顺序每小时处理下一批。NASDAQ 成分来自 FMP 的
+   `nasdaq-constituent` 目录，G10 外汇只保留 USD、EUR、JPY、GBP、CHF、CAD、AUD、NZD、SEK、NOK 的交叉对。
+   `SYNC_SYMBOLS=AAPL,BTCUSD,EURUSD` 是手工补充标的，会与市场范围合并；不配置市场范围时，手工代码
+   仍会覆盖 `SYNC_BOOTSTRAP_LIMIT`。预检会拒绝目录中不存在的手工代码，并基于每小时轮换批次估算日调用量：
 
    ```powershell
    Invoke-RestMethod http://localhost:8000/admin/sync/catalog -Method Post -Headers $headers

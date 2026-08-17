@@ -28,8 +28,16 @@ class Settings(BaseSettings):
     sync_catalog_hour: int = 2
     sync_bootstrap_limit: int = 0
     sync_symbols: str = ""
+    sync_universes: str = ""
+    sync_rotation_batch_size: int = 1000
 
-    @field_validator("fmp_requests_per_minute", "fmp_daily_request_budget", "fmp_concurrency")
+    @field_validator(
+        "fmp_requests_per_minute",
+        "fmp_daily_request_budget",
+        "fmp_concurrency",
+        "sync_shard_size",
+        "sync_rotation_batch_size",
+    )
     @classmethod
     def positive(cls, value: int) -> int:
         if value < 1:
@@ -46,12 +54,17 @@ class Settings(BaseSettings):
     @field_validator("sync_symbols")
     @classmethod
     def normalize_sync_symbols(cls, value: str) -> str:
-        symbols: list[str] = []
-        for raw_symbol in value.split(","):
-            symbol = raw_symbol.strip().upper()
-            if symbol and symbol not in symbols:
-                symbols.append(symbol)
-        return ",".join(symbols)
+        return _normalize_csv(value)
+
+    @field_validator("sync_universes")
+    @classmethod
+    def normalize_sync_universes(cls, value: str) -> str:
+        universes = _normalize_csv(value).lower().split(",") if value.strip() else []
+        allowed = {"crypto", "nasdaq", "forex_g10"}
+        invalid = sorted(set(universes) - allowed)
+        if invalid:
+            raise ValueError("SYNC_UNIVERSES contains unsupported values: " + ", ".join(invalid))
+        return ",".join(universes)
 
     @property
     def configured(self) -> bool:
@@ -60,6 +73,19 @@ class Settings(BaseSettings):
     @property
     def sync_symbol_list(self) -> tuple[str, ...]:
         return tuple(symbol for symbol in self.sync_symbols.split(",") if symbol)
+
+    @property
+    def sync_universe_list(self) -> tuple[str, ...]:
+        return tuple(universe for universe in self.sync_universes.split(",") if universe)
+
+
+def _normalize_csv(value: str) -> str:
+    symbols: list[str] = []
+    for raw_symbol in value.split(","):
+        symbol = raw_symbol.strip().upper()
+        if symbol and symbol not in symbols:
+            symbols.append(symbol)
+    return ",".join(symbols)
 
 
 @lru_cache

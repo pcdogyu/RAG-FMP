@@ -66,6 +66,8 @@ class Bridge:
             bootstrap_limit=settings.sync_bootstrap_limit,
             shard_size=settings.sync_shard_size,
             sync_symbols=settings.sync_symbol_list,
+            sync_universes=settings.sync_universe_list,
+            rotation_batch_size=settings.sync_rotation_batch_size,
         )
         self._scheduler_task: asyncio.Task[None] | None = None
         self._executed_slots: set[str] = set()

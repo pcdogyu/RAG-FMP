@@ -15,7 +15,12 @@ def test_health_is_public_and_ready_requires_fmp_key(tmp_path):
 
 
 def test_sync_symbols_are_normalized():
-    settings = Settings(sync_symbols=" aapl, BTCUSD, AAPL ,, eurusd ")
+    settings = Settings(
+        sync_symbols=" aapl, BTCUSD, AAPL ,, eurusd ",
+        sync_universes=" crypto, NASDAQ, crypto, forex_g10 ",
+    )
 
     assert settings.sync_symbols == "AAPL,BTCUSD,EURUSD"
     assert settings.sync_symbol_list == ("AAPL", "BTCUSD", "EURUSD")
+    assert settings.sync_universes == "crypto,nasdaq,forex_g10"
+    assert settings.sync_universe_list == ("crypto", "nasdaq", "forex_g10")

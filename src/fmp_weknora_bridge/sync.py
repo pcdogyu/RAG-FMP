@@ -6,10 +6,14 @@ from collections import Counter
 from datetime import UTC, datetime
 
 from .fmp import ASSET_TYPES, FMPClient
+from .models import Instrument
 from .observability import SYNC_DOCUMENTS, SYNC_DURATION, SYNC_LAST_SUCCESS
 from .research import build_research_markdown, content_hash
 from .storage import Repository
 from .weknora import WeKnoraClient
+
+G10_CURRENCIES = frozenset({"USD", "EUR", "JPY", "GBP", "CHF", "CAD", "AUD", "NZD", "SEK", "NOK"})
+ROTATION_CURSOR_NAME = "market-universe-v1"
 
 
 class SyncService:
@@ -23,6 +27,8 @@ class SyncService:
         bootstrap_limit: int,
         shard_size: int,
         sync_symbols: tuple[str, ...] = (),
+        sync_universes: tuple[str, ...] = (),
+        rotation_batch_size: int = 1000,
     ):
         self.fmp = fmp
         self.repository = repository
@@ -31,6 +37,8 @@ class SyncService:
         self.bootstrap_limit = bootstrap_limit
         self.shard_size = shard_size
         self.sync_symbols = sync_symbols
+        self.sync_universes = sync_universes
+        self.rotation_batch_size = rotation_batch_size
         self._catalog_lock = asyncio.Lock()
         self._snapshot_lock = asyncio.Lock()
 
@@ -52,24 +60,52 @@ class SyncService:
                 raise RuntimeError(
                     "SYNC_SYMBOLS contains symbols absent from the active catalog: "
                     + ", ".join(missing_symbols)
-                    + "; run catalog synchronization or correct the whitelist"
+                    + "; run catalog synchronization or correct the manual symbols"
                 )
-        selected_counts = (
-            dict(Counter(instrument.asset_type for instrument in selected_instruments))
-            if self.sync_symbols or self.bootstrap_limit
-            else catalog_counts
-        )
-        # Starter uses the allowed single-symbol quote endpoint, not batch-quote.
-        quote_calls = sum(selected_counts.values())
-        daily_research_calls = sum(
-            count * (6 if asset_type in {"stock", "etf"} else 2)
-            for asset_type, count in selected_counts.items()
-        )
-        estimated = quote_calls * 24 + daily_research_calls
+
+        selected_counts = dict(Counter(item.asset_type for item in selected_instruments))
         checks["catalog_counts"] = catalog_counts
         checks["selected_counts"] = selected_counts
         checks["bootstrap_limit"] = self.bootstrap_limit
+
+        if self.sync_universes:
+            universe_counts = self._universe_counts()
+            hourly_batch = min(self.rotation_batch_size, len(selected_instruments))
+            daily_visits = hourly_batch * 24
+            fundamental_targets = min(
+                daily_visits,
+                sum(count for kind, count in selected_counts.items() if kind in {"stock", "etf"}),
+            )
+            # Each rotating visit has at most a quote and news request. A newly seen
+            # stock/ETF can additionally use five annual-research requests. This is
+            # deliberately conservative and is the startup budget safety gate.
+            estimated = daily_visits * 2 + fundamental_targets * 5
+            checks.update(
+                {
+                    "sync_universes": list(self.sync_universes),
+                    "universe_counts": universe_counts,
+                    "effective_universe_count": len(selected_instruments),
+                    "hourly_rotation_batch_size": hourly_batch,
+                    "full_coverage_hours": _ceil_div(len(selected_instruments), hourly_batch),
+                    "estimated_daily_rotating_visits": daily_visits,
+                }
+            )
+        else:
+            # Existing manual/bootstrap behavior remains stable when no dynamic
+            # market universe is configured.
+            selected_counts = (
+                selected_counts if self.sync_symbols or self.bootstrap_limit else catalog_counts
+            )
+            checks["selected_counts"] = selected_counts
+            quote_calls = sum(selected_counts.values())
+            daily_research_calls = sum(
+                count * (6 if asset_type in {"stock", "etf"} else 2)
+                for asset_type, count in selected_counts.items()
+            )
+            estimated = quote_calls * 24 + daily_research_calls
+
         checks["estimated_daily_requests"] = estimated
+        checks["daily_request_budget"] = self.fmp.limiter.max_per_day
         if estimated and estimated > self.fmp.limiter.max_per_day:
             raise RuntimeError(
                 f"configured FMP daily budget ({self.fmp.limiter.max_per_day}) is below the conservative "
@@ -87,14 +123,12 @@ class SyncService:
             try:
                 for asset_type in sorted(ASSET_TYPES):
                     catalog = await self.fmp.catalog(asset_type)
-                    count = 0
-                    for item in catalog if isinstance(catalog, list) else []:
-                        try:
-                            self.repository.upsert_instrument(item, asset_type)
-                            count += 1
-                        except ValueError:
-                            continue
-                    counts[asset_type] = count
+                    counts[asset_type] = self._upsert_catalog(catalog, asset_type)
+                # stock-list does not reliably carry exchange information for this
+                # subscription, so NASDAQ membership is sourced separately.
+                counts["nasdaq"] = self._upsert_catalog(
+                    await self.fmp.nasdaq_constituents(), "stock", exchange_override="NASDAQ"
+                )
                 self.repository.finish_run(
                     run.id, processed=sum(counts.values()), written=sum(counts.values())
                 )
@@ -105,17 +139,29 @@ class SyncService:
                 )
                 raise
 
+    def _upsert_catalog(
+        self, catalog: object, asset_type: str, *, exchange_override: str | None = None
+    ) -> int:
+        count = 0
+        for item in catalog if isinstance(catalog, list) else []:
+            try:
+                self.repository.upsert_instrument(
+                    item, asset_type, exchange_override=exchange_override
+                )
+                count += 1
+            except ValueError:
+                continue
+        return count
+
     async def run_hourly_snapshot(self) -> dict[str, int]:
-        # Do not permit the expensive global job before validating FMP access,
-        # WeKnora write access, and the configured daily request budget.
         await self.preflight()
         if self._snapshot_lock.locked():
             return {"skipped": 1}
         async with self._snapshot_lock:
             with SYNC_DURATION.labels(name="hourly").time():
                 run = self.repository.start_run("hourly")
-                instruments = self._selected_instruments()
-                processed = written = 0
+                instruments, rotation_next_position = self._hourly_instruments()
+                processed = written = failed = 0
                 try:
                     for start in range(0, len(instruments), self.shard_size):
                         shard = instruments[start : start + self.shard_size]
@@ -128,20 +174,79 @@ class SyncService:
                             if outcome is True:
                                 written += 1
                             elif isinstance(outcome, Exception):
+                                failed += 1
                                 SYNC_DOCUMENTS.labels(result="failed").inc()
-                    self.repository.finish_run(run.id, processed=processed, written=written)
-                    SYNC_LAST_SUCCESS.set_to_current_time()
-                    return {"processed": processed, "written": written}
+                    if failed:
+                        self.repository.finish_run(
+                            run.id,
+                            processed=processed,
+                            written=written,
+                            error=f"{failed} instrument(s) failed; rotation cursor was not advanced",
+                        )
+                    else:
+                        self.repository.finish_run(run.id, processed=processed, written=written)
+                        self._advance_rotation_cursor(rotation_next_position)
+                        SYNC_LAST_SUCCESS.set_to_current_time()
+                    result = {"processed": processed, "written": written}
+                    if failed:
+                        result["failed"] = failed
+                    return result
                 except Exception as exc:
                     self.repository.finish_run(
                         run.id, processed=processed, written=written, error=str(exc)
                     )
                     raise
 
-    def _selected_instruments(self):
-        if self.sync_symbols:
-            return self.repository.list_instruments(symbols=self.sync_symbols)
-        return self.repository.list_instruments(limit=self.bootstrap_limit)
+    def _selected_instruments(self) -> list[Instrument]:
+        if not self.sync_universes:
+            if self.sync_symbols:
+                return self.repository.list_instruments(symbols=self.sync_symbols)
+            return self.repository.list_instruments(limit=self.bootstrap_limit)
+
+        all_instruments = self.repository.list_instruments()
+        by_id: dict[int, Instrument] = {}
+        for instrument in self.repository.list_instruments(symbols=self.sync_symbols):
+            by_id[instrument.id] = instrument
+        for instrument in all_instruments:
+            if "crypto" in self.sync_universes and instrument.asset_type == "crypto":
+                by_id[instrument.id] = instrument
+            elif "nasdaq" in self.sync_universes and (
+                instrument.asset_type == "stock" and instrument.exchange.upper() == "NASDAQ"
+            ):
+                by_id[instrument.id] = instrument
+            elif "forex_g10" in self.sync_universes and _is_g10_forex(instrument):
+                by_id[instrument.id] = instrument
+        return [by_id[instrument_id] for instrument_id in sorted(by_id)]
+
+    def _universe_counts(self) -> dict[str, int]:
+        instruments = self.repository.list_instruments()
+        return {
+            "crypto": sum(item.asset_type == "crypto" for item in instruments)
+            if "crypto" in self.sync_universes
+            else 0,
+            "nasdaq": sum(
+                item.asset_type == "stock" and item.exchange.upper() == "NASDAQ"
+                for item in instruments
+            )
+            if "nasdaq" in self.sync_universes
+            else 0,
+            "forex_g10": sum(_is_g10_forex(item) for item in instruments)
+            if "forex_g10" in self.sync_universes
+            else 0,
+        }
+
+    def _hourly_instruments(self) -> tuple[list[Instrument], int | None]:
+        instruments = self._selected_instruments()
+        if not self.sync_universes or not instruments:
+            return instruments, None
+        instruments = _interleave_by_asset_type(instruments)
+        limit = min(self.rotation_batch_size, len(instruments))
+        start = self.repository.get_sync_cursor(ROTATION_CURSOR_NAME) % len(instruments)
+        return (instruments[start:] + instruments[:start])[:limit], (start + limit) % len(instruments)
+
+    def _advance_rotation_cursor(self, next_position: int | None) -> None:
+        if self.sync_universes and next_position is not None:
+            self.repository.set_sync_cursor(ROTATION_CURSOR_NAME, next_position)
 
     async def _sync_instrument(self, symbol: str, asset_type: str) -> bool:
         async with self.semaphore:
@@ -185,3 +290,36 @@ class SyncService:
             )
             SYNC_DOCUMENTS.labels(result="written").inc()
             return True
+
+
+def _is_g10_forex(instrument: Instrument) -> bool:
+    if instrument.asset_type != "forex":
+        return False
+    symbol = instrument.symbol.upper()
+    return (
+        len(symbol) == 6
+        and symbol.isalpha()
+        and symbol[:3] in G10_CURRENCIES
+        and symbol[3:] in G10_CURRENCIES
+        and symbol[:3] != symbol[3:]
+    )
+
+
+def _ceil_div(value: int, divisor: int) -> int:
+    return (value + divisor - 1) // divisor if divisor else 0
+
+
+def _interleave_by_asset_type(instruments: list[Instrument]) -> list[Instrument]:
+    """Produce a stable order that gives each requested market a turn per batch."""
+    groups: dict[str, list[Instrument]] = {}
+    for instrument in instruments:
+        groups.setdefault(instrument.asset_type, []).append(instrument)
+    for group in groups.values():
+        group.sort(key=lambda item: (item.symbol, item.id))
+    ordered: list[Instrument] = []
+    types = sorted(groups)
+    for index in range(max((len(group) for group in groups.values()), default=0)):
+        for asset_type in types:
+            if index < len(groups[asset_type]):
+                ordered.append(groups[asset_type][index])
+    return ordered

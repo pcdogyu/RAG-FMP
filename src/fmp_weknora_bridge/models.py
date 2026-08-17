@@ -51,3 +51,13 @@ class SyncRun(Base):
     processed: Mapped[int] = mapped_column(Integer, default=0)
     written: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str] = mapped_column(Text, default="")
+
+
+class SyncCursor(Base):
+    __tablename__ = "sync_cursors"
+
+    name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )

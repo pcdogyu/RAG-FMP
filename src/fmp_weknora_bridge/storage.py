@@ -6,7 +6,7 @@ from datetime import datetime
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
-from .models import Base, Instrument, ResearchDocument, SyncRun
+from .models import Base, Instrument, ResearchDocument, SyncCursor, SyncRun
 
 
 class Repository:
@@ -28,7 +28,9 @@ class Repository:
                 session.rollback()
                 raise
 
-    def upsert_instrument(self, item: dict, asset_type: str) -> Instrument:
+    def upsert_instrument(
+        self, item: dict, asset_type: str, *, exchange_override: str | None = None
+    ) -> Instrument:
         symbol = str(item.get("symbol") or item.get("ticker") or "").upper().strip()
         if not symbol:
             raise ValueError("FMP catalog row has no symbol")
@@ -42,8 +44,14 @@ class Repository:
             if entity is None:
                 entity = Instrument(symbol=symbol, asset_type=asset_type)
                 session.add(entity)
-            entity.name = str(item.get("name") or item.get("companyName") or "")[:512]
-            entity.exchange = str(item.get("exchange") or item.get("exchangeShortName") or "")[:128]
+            name = str(item.get("name") or item.get("companyName") or "")[:512]
+            exchange = str(item.get("exchange") or item.get("exchangeShortName") or "")[:128]
+            if name:
+                entity.name = name
+            if exchange_override is not None:
+                entity.exchange = exchange_override[:128]
+            elif exchange:
+                entity.exchange = exchange
             entity.source_hash = source_hash
             entity.active = "true"
             return entity
@@ -72,6 +80,19 @@ class Repository:
                 .group_by(Instrument.asset_type)
             )
             return {str(asset_type): int(count) for asset_type, count in rows}
+
+    def get_sync_cursor(self, name: str) -> int:
+        with self.session() as session:
+            cursor = session.get(SyncCursor, name)
+            return cursor.position if cursor else 0
+
+    def set_sync_cursor(self, name: str, position: int) -> None:
+        with self.session() as session:
+            cursor = session.get(SyncCursor, name)
+            if cursor is None:
+                cursor = SyncCursor(name=name)
+                session.add(cursor)
+            cursor.position = position
 
     def start_run(self, name: str) -> SyncRun:
         with self.session() as session:

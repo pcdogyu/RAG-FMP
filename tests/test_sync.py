@@ -112,3 +112,63 @@ async def test_preflight_rejects_unknown_whitelist_symbol(tmp_path: Path):
 
     with pytest.raises(RuntimeError, match="UNKNOWN"):
         await service.preflight()
+
+
+async def test_dynamic_universes_union_manual_symbols_and_rotate(tmp_path: Path):
+    repo = Repository(f"sqlite:///{tmp_path / 'bridge.db'}")
+    repo.create_tables()
+    for symbol in ("BTCUSD", "ETHUSD", "SOLUSD"):
+        repo.upsert_instrument({"symbol": symbol}, "crypto")
+    repo.upsert_instrument({"symbol": "AAPL"}, "stock", exchange_override="NASDAQ")
+    repo.upsert_instrument({"symbol": "IBM"}, "stock", exchange_override="NYSE")
+    repo.upsert_instrument({"symbol": "EURUSD"}, "forex")
+    repo.upsert_instrument({"symbol": "USDJPY"}, "forex")
+    repo.upsert_instrument({"symbol": "USDCNH"}, "forex")
+    service = SyncService(
+        FakeFMP(),
+        repo,
+        FakeWeKnora(),
+        concurrency=1,
+        bootstrap_limit=0,
+        shard_size=3,
+        sync_symbols=("IBM",),
+        sync_universes=("crypto", "nasdaq", "forex_g10"),
+        rotation_batch_size=3,
+    )
+
+    preflight = await service.preflight()
+    first_batch, next_position = service._hourly_instruments()
+
+    assert preflight["universe_counts"] == {"crypto": 3, "nasdaq": 1, "forex_g10": 2}
+    assert preflight["effective_universe_count"] == 7
+    assert preflight["hourly_rotation_batch_size"] == 3
+    assert preflight["full_coverage_hours"] == 3
+    assert preflight["estimated_daily_requests"] == 154
+    assert {instrument.asset_type for instrument in first_batch} == {"crypto", "forex", "stock"}
+    assert next_position == 3
+
+    result = await service.run_hourly_snapshot()
+
+    assert result == {"processed": 3, "written": 3}
+    assert repo.get_sync_cursor("market-universe-v1") == 3
+
+
+async def test_catalog_marks_nasdaq_without_erasing_it_from_stock_list(tmp_path: Path):
+    class CatalogFMP(FakeFMP):
+        async def catalog(self, asset_type):
+            return [{"symbol": "AAPL"}] if asset_type == "stock" else []
+
+        async def nasdaq_constituents(self):
+            return [{"symbol": "AAPL", "name": "Apple Inc."}]
+
+    repo = Repository(f"sqlite:///{tmp_path / 'bridge.db'}")
+    repo.create_tables()
+    service = SyncService(
+        CatalogFMP(), repo, FakeWeKnora(), concurrency=1, bootstrap_limit=0, shard_size=10
+    )
+
+    counts = await service.refresh_catalog()
+    instrument = repo.list_instruments(symbols=("AAPL",))[0]
+
+    assert counts["nasdaq"] == 1
+    assert instrument.exchange == "NASDAQ"
