@@ -158,6 +158,33 @@ async def test_dynamic_universes_union_manual_symbols_and_rotate(tmp_path: Path)
     assert repo.get_sync_cursor("market-universe-v1") == 3
 
 
+def test_dynamic_universes_do_not_include_all_catalog_when_manual_symbols_are_empty(tmp_path: Path):
+    repo = Repository(f"sqlite:///{tmp_path / 'bridge.db'}")
+    repo.create_tables()
+    repo.upsert_instrument({"symbol": "BTCUSD"}, "crypto")
+    repo.upsert_instrument({"symbol": "AAPL"}, "stock", exchange_override="NASDAQ")
+    repo.upsert_instrument({"symbol": "IBM"}, "stock", exchange_override="NYSE")
+    repo.upsert_instrument({"symbol": "QQQ"}, "etf")
+    repo.upsert_instrument({"symbol": "EURUSD"}, "forex")
+    service = SyncService(
+        FakeFMP(),
+        repo,
+        FakeWeKnora(),
+        concurrency=1,
+        bootstrap_limit=0,
+        shard_size=10,
+        sync_universes=("crypto", "nasdaq", "forex_g10"),
+    )
+
+    selected = service._selected_instruments()
+
+    assert {(instrument.symbol, instrument.asset_type) for instrument in selected} == {
+        ("BTCUSD", "crypto"),
+        ("AAPL", "stock"),
+        ("EURUSD", "forex"),
+    }
+
+
 async def test_catalog_marks_nasdaq_without_erasing_it_from_stock_list(tmp_path: Path):
     class CatalogFMP(FakeFMP):
         async def catalog(self, asset_type):

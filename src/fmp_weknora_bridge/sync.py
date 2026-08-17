@@ -219,8 +219,9 @@ class SyncService:
 
         all_instruments = self.repository.list_instruments()
         by_id: dict[int, Instrument] = {}
-        for instrument in self.repository.list_instruments(symbols=self.sync_symbols):
-            by_id[instrument.id] = instrument
+        if self.sync_symbols:
+            for instrument in self.repository.list_instruments(symbols=self.sync_symbols):
+                by_id[instrument.id] = instrument
         for instrument in all_instruments:
             if "crypto" in self.sync_universes and instrument.asset_type == "crypto":
                 by_id[instrument.id] = instrument
