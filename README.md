@@ -32,6 +32,9 @@
    `SYNC_SYMBOLS=AAPL,BTCUSD,EURUSD` 是手工补充标的，会与市场范围合并；不配置市场范围时，手工代码
    仍会覆盖 `SYNC_BOOTSTRAP_LIMIT`。预检会拒绝目录中不存在的手工代码，并基于每小时轮换批次估算日调用量：
 
+   `nasdaq` 范围需要当前 FMP Key 有 `nasdaq-constituent` 端点权限；若目录中没有可用 NASDAQ
+   成分，预检会拒绝启动，避免服务无提示地降级为只同步其他市场。
+
    ```powershell
    Invoke-RestMethod http://localhost:8000/admin/sync/catalog -Method Post -Headers $headers
    Invoke-RestMethod http://localhost:8000/admin/sync/hourly -Method Post -Headers $headers

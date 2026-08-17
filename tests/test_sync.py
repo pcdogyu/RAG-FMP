@@ -172,3 +172,21 @@ async def test_catalog_marks_nasdaq_without_erasing_it_from_stock_list(tmp_path:
 
     assert counts["nasdaq"] == 1
     assert instrument.exchange == "NASDAQ"
+
+
+async def test_preflight_refuses_missing_nasdaq_catalog(tmp_path: Path):
+    repo = Repository(f"sqlite:///{tmp_path / 'bridge.db'}")
+    repo.create_tables()
+    repo.upsert_instrument({"symbol": "AAPL"}, "stock")
+    service = SyncService(
+        FakeFMP(),
+        repo,
+        FakeWeKnora(),
+        concurrency=1,
+        bootstrap_limit=0,
+        shard_size=10,
+        sync_universes=("nasdaq",),
+    )
+
+    with pytest.raises(RuntimeError, match="NASDAQ universe"):
+        await service.preflight()

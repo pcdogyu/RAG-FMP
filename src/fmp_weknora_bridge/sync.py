@@ -70,6 +70,12 @@ class SyncService:
 
         if self.sync_universes:
             universe_counts = self._universe_counts()
+            if "nasdaq" in self.sync_universes and not universe_counts["nasdaq"]:
+                raise RuntimeError(
+                    "NASDAQ universe is configured but no NASDAQ constituents are available in the "
+                    "catalog. Refresh the catalog with FMP access to nasdaq-constituent, or remove "
+                    "nasdaq from SYNC_UNIVERSES."
+                )
             hourly_batch = min(self.rotation_batch_size, len(selected_instruments))
             daily_visits = hourly_batch * 24
             fundamental_targets = min(
