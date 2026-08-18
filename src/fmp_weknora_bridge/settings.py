@@ -23,7 +23,8 @@ class Settings(BaseSettings):
     fmp_daily_request_budget: int = 100000
     fmp_concurrency: int = 8
     sync_shard_size: int = 250
-    sync_enabled: bool = True
+    # Live FMP data is served through MCP by default; indexing must be explicitly enabled.
+    sync_enabled: bool = False
     sync_hourly_minute: int = 10
     sync_catalog_hour: int = 2
     sync_bootstrap_limit: int = 0

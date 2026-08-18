@@ -18,14 +18,17 @@
 2. 复制 `.env.example` 为 `.env`，填入密钥和知识库 ID。不要把 `.env` 提交到 Git。
 3. 找到 WeKnora compose 网络名，设置 `WEKNORA_DOCKER_NETWORK`；例如 `weknora_default`。
 4. 启动：`docker compose up -d --build`。
-5. 预检：
+5. 默认仅提供实时 MCP 查询，`SYNC_ENABLED=false` 不会启动定时同步，也会拒绝手工触发
+   `/admin/sync/catalog` 和 `/admin/sync/hourly`，以避免将高频市场数据写入知识库并产生 embedding 消耗。
+6. 预检：
 
    ```powershell
    $headers = @{ Authorization = "Bearer $env:MCP_BEARER_TOKEN" }
    Invoke-RestMethod http://localhost:8000/admin/sync/preflight -Method Post -Headers $headers
    ```
 
-6. 先执行目录同步，再用较小的 `SYNC_BOOTSTRAP_LIMIT` 试运行小时同步。生产全市场轮换可设置
+需要明确将 FMP 数据索引至 WeKnora 时，先将 `SYNC_ENABLED=true`，再执行目录同步，并用较小的
+`SYNC_BOOTSTRAP_LIMIT` 试运行小时同步。生产全市场轮换可设置
    `SYNC_UNIVERSES=crypto,nasdaq,forex_g10`、`SYNC_ROTATION_BATCH_SIZE=1000`；服务每天从 FMP 刷新目录，
    并以稳定的跨资产轮换顺序每小时处理下一批。NASDAQ 上市股票来自 FMP 的
    `company-screener?exchange=NASDAQ` 分页目录，G10 外汇只保留 USD、EUR、JPY、GBP、CHF、CAD、AUD、NZD、SEK、NOK 的交叉对。

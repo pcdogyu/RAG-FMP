@@ -264,6 +264,10 @@ def create_app(settings: Settings) -> Starlette:
         if not authorized(request):
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
         name = request.path_params["name"]
+        if name in {"catalog", "hourly"} and not bridge.settings.sync_enabled:
+            detail = "Synchronization is disabled by SYNC_ENABLED=false"
+            logger.warning("admin synchronization %s rejected: %s", name, detail)
+            return JSONResponse({"detail": detail}, status_code=409)
         try:
             if name == "catalog":
                 result = await bridge.sync.refresh_catalog()
